@@ -72,7 +72,7 @@ static struct rte_acl_field_def field_defs[NUM_FIELDS] = {
         .type = RTE_ACL_FIELD_TYPE_RANGE,
         .size = sizeof(uint16_t),
         .field_index = DST_PORT,
-        .input_index = 4,
+        .input_index = 3,
         .offset = offsetof(pkt, tcp_hdr.dst_port),
     },
 };
@@ -109,41 +109,50 @@ int main(int argc, char** argv) {
 
 
     // Rule 0: Allow TCP from 192.168.1.0/24
-    rules[0].data.priority = 1;
+    rules[0].data.priority = 2;
     rules[0].data.category_mask = 1;
     rules[0].data.userdata = ACTION_ALLOW;
 
-    /* Rules must be in HOST byte order. MASK type uses prefix length (24 = /24), not bitmask. */
     rules[0].field[SRC_IP].value.u32 = RTE_IPV4(192, 168, 1, 0);
     rules[0].field[SRC_IP].mask_range.u32 = 24;
 
     rules[0].field[DST_IP].value.u32 = 0;
-    rules[0].field[DST_IP].mask_range.u32 = 0;  /* 0 = wildcard, match any */
+    rules[0].field[DST_IP].mask_range.u32 = 0;  
 
-    rules[0].field[SRC_PORT].value.u16 = 0;
-    rules[0].field[SRC_PORT].mask_range.u16 = 65535;  /* RANGE: [0, 65535] = any port */
+    rules[0].field[SRC_PORT].value.u16 = 10;
+    rules[0].field[SRC_PORT].mask_range.u16 = 65535;  
 
-    rules[0].field[DST_PORT].value.u16 = 0;
+    rules[0].field[DST_PORT].value.u16 = 30;
     rules[0].field[DST_PORT].mask_range.u16 = 65535;
 
     rules[0].field[PROTO].value.u8 = IPPROTO_TCP;
     rules[0].field[PROTO].mask_range.u8 = 0xFF;
 
-    // // Rule 1: Drop all others
-    // rules[1].data.priority = 0;
-    // rules[1].data.category_mask = 1;
-    // rules[1].data.userdata = ACTION_DROP;
 
-    // for (int i = 0; i < NUM_FIELDS; i++) {
-    //     // Set value and mask for all fields
-    //     rules[1].field[i].value.u64 = 0;      // zero value
-    //     rules[1].field[i].mask_range.u64 = 0; // wildcard
-    // }
+
+    rules[1].data.priority = 1;
+    rules[1].data.category_mask = 1;
+    rules[1].data.userdata = ACTION_DROP;
+
+    rules[1].field[SRC_IP].value.u32 = 0;
+    rules[1].field[SRC_IP].mask_range.u32 = 24;
+
+    rules[1].field[DST_IP].value.u32 = 0;
+    rules[1].field[DST_IP].mask_range.u32 = 0;  
+
+    rules[1].field[SRC_PORT].value.u16 = 10;
+    rules[1].field[SRC_PORT].mask_range.u16 = 65535;  
+
+    rules[1].field[DST_PORT].value.u16 = 30;
+    rules[1].field[DST_PORT].mask_range.u16 = 65535;
+
+    rules[1].field[PROTO].value.u8 = IPPROTO_TCP;
+    rules[1].field[PROTO].mask_range.u8 = 0xFF;
 
     
 
 
-    ret = rte_acl_add_rules(acl_ctx, (struct rte_acl_rule*)rules, 1);
+    ret = rte_acl_add_rules(acl_ctx, (struct rte_acl_rule*)rules, 2);
     if (ret != 0) {
         printf("some error while adding rules\n");
         rte_acl_free(acl_ctx);
@@ -169,29 +178,43 @@ int main(int argc, char** argv) {
     printf("ACL built successfully\n");
 
 
+    int num_packets = 2;
+    pkt pkts[num_packets];
+    for(int i=0; i<num_packets; i++) {
+        memset(&pkts[i], i, sizeof(pkts[i]));
+
+        if(i == 0) {
+            pkts[i].ip_hdr.src_addr = rte_cpu_to_be_32(RTE_IPV4(192,168,1,10));
+        } 
+        else {
+            pkts[i].ip_hdr.src_addr = rte_cpu_to_be_32(RTE_IPV4(192,168,3,10));
+        }
+        pkts[i].tcp_hdr.src_port = rte_cpu_to_be_16(1234);
+        pkts[i].tcp_hdr.dst_port = rte_cpu_to_be_16(80);
+        pkts[i].ip_hdr.next_proto_id = IPPROTO_TCP;
+    }
+
     
-    pkt pkt1;
-    memset(&pkt1, 0, sizeof(pkt1));
 
-    pkt1.ip_hdr.src_addr = rte_cpu_to_be_32(RTE_IPV4(192,168,1,10));
-    pkt1.tcp_hdr.src_port = rte_cpu_to_be_16(1234);
-    pkt1.tcp_hdr.dst_port = rte_cpu_to_be_16(80);
-    pkt1.ip_hdr.next_proto_id = IPPROTO_TCP;
+    const uint8_t* data[num_packets];
+    for(int i=0; i<num_packets; i++) {
+        data[i] = (uint8_t*)&pkts[i];
+    }
+    
+    uint32_t results[num_packets];
 
-
-    const uint8_t* data[1];
-    data[0] = (uint8_t*)&pkt1;
-    uint32_t results[1];
-
-    ret = rte_acl_classify(acl_ctx, data, results, 1, MAX_CATEGORIES);
+    ret = rte_acl_classify(acl_ctx, data, results, 2, MAX_CATEGORIES);
     if (ret != 0) {
         printf("incorrect arguments given to the classify function\n");
     } else {
-        printf("value of result is %d\n", results[0]);
-        if (results[0] == ACTION_ALLOW) {
-            printf("packet was allowed\n");
-        } else {
-            printf("packet was not allowed\n");
+
+        for(int i=0; i<num_packets; i++) {
+            printf("value of result[%d] is %d\n", i, results[i]);
+            if (results[i] == ACTION_ALLOW) {
+                printf("packet was allowed\n");
+            } else {
+                printf("packet was not allowed\n");
+            }
         }
     }
 
