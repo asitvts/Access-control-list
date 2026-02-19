@@ -72,7 +72,7 @@ static struct rte_acl_field_def field_defs[NUM_FIELDS] = {
         .type = RTE_ACL_FIELD_TYPE_RANGE,
         .size = sizeof(uint16_t),
         .field_index = DST_PORT,
-        .input_index = 3,
+        .input_index = 4,
         .offset = offsetof(pkt, tcp_hdr.dst_port),
     },
 };
